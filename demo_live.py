@@ -141,7 +141,63 @@ class LiveHAMERPipeline:
                    right=right)
         return out
 
-    def __call__(self, img_bgr: np.ndarray):
+    def render(self, batch, out,
+               prefix: str,
+               side_view: bool = False):
+        model_cfg = self.model_cfg
+        model = self.model
+
+        renderer = Renderer(model_cfg,
+                            faces=model.mano.faces)
+        multiplier = (2 * batch['right'] - 1)
+        pred_cam = out['pred_cam'].clone()
+        pred_cam[:, 1] = multiplier * pred_cam[:, 1]
+        box_center = batch["box_center"].float()
+        box_size = batch["box_size"].float()
+        img_size = batch["img_size"].float()
+        multiplier = (2 * batch['right'] - 1)
+        scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+        pred_cam_t_full = cam_crop_to_full(
+            pred_cam,
+            box_center,
+            box_size,
+            img_size,
+            scaled_focal_length).detach().cpu().numpy()
+
+        # Render the result
+        batch_size = batch['img'].shape[0]
+        for n in range(batch_size):
+            # Get filename from path img_path
+            person_id = int(batch['personid'][n])
+            white_img = (torch.ones_like(batch['img'][n]).cpu(
+            ) - DEFAULT_MEAN[:, None, None] / 255) / (DEFAULT_STD[:, None, None] / 255)
+            input_patch = batch['img'][n].cpu(
+            ) * (DEFAULT_STD[:, None, None] / 255) + (DEFAULT_MEAN[:, None, None] / 255)
+            input_patch = input_patch.permute(1, 2, 0).numpy()
+
+            regression_img = renderer(
+                out['pred_vertices'][n].detach().cpu().numpy(),
+                out['pred_cam_t'][n].detach().cpu().numpy(),
+                batch['img'][n],
+                mesh_base_color=LIGHT_BLUE, scene_bg_color=(1, 1, 1),)
+
+            if side_view:
+                side_img = renderer(
+                    out['pred_vertices'][n].detach().cpu().numpy(),
+                    out['pred_cam_t'][n].detach().cpu().numpy(),
+                    white_img, mesh_base_color=LIGHT_BLUE,
+                    scene_bg_color=(1, 1, 1),
+                    side_view=True)
+                final_img = np.concatenate(
+                    [input_patch, regression_img, side_img], axis=1)
+            else:
+                final_img = np.concatenate(
+                    [input_patch, regression_img], axis=1)
+
+            cv2.imwrite(f'{prefix}_{person_id}.png',
+                        255 * final_img[:, :, ::-1])
+
+    def __call__(self, img_bgr: np.ndarray, render_prefix=None):
         cfg = self.cfg
 
         with torch.no_grad():
@@ -159,9 +215,9 @@ class LiveHAMERPipeline:
                                     hand_data['right'],
                                     rescale_factor=self.cfg.rescale_factor)
             dataloader = torch.utils.data.DataLoader(dataset,
-                                                    batch_size=cfg.batch_size,
-                                                    shuffle=False,
-                                                    num_workers=0)
+                                                     batch_size=cfg.batch_size,
+                                                     shuffle=False,
+                                                     num_workers=0)
             all_verts = []
             all_cam_t = []
             all_right = []
@@ -171,7 +227,11 @@ class LiveHAMERPipeline:
                 batch = recursive_to(batch, self.device)
                 with torch.inference_mode():
                     out = self.model(batch)
-                    kpts.append(out['pred_keypoints_3d'].detach().cpu().numpy())
+                    kpts.append(
+                        out['pred_keypoints_3d'].detach().cpu().numpy())
+
+                if render_prefix is not None:
+                    self.render(batch, out, render_prefix)
 
         if len(kpts) <= 0:
             return None
@@ -240,13 +300,16 @@ def main():
                  for end in args.file_type
                  for img in Path(args.img_folder).glob(end)]
     # Iterate over all images in folder
-    t0=time.time()
-    for img_path in img_paths:
+    t0 = time.time()
+    for i, img_path in enumerate(img_paths):
         img_cv2 = cv2.imread(str(img_path))
-        out = pipe(img_cv2)
-        t1=time.time()
-        print(t1-t0)
-        t0=t1
+        out = pipe(img_cv2,
+                   # render_prefix=F'/tmp/docker/demo_out/{i:02d}'
+                   render_prefix=None
+                   )
+        t1 = time.time()
+        print(t1 - t0)
+        t0 = t1
 
 
 if __name__ == '__main__':
