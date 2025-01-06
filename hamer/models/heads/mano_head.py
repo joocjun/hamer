@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,7 +33,8 @@ class MANOTransformerDecoderHead(nn.Module):
             token_dim=(npose + 10 + 3) if self.input_is_mean_shape else 1,
             dim=1024,
         )
-        transformer_args = (transformer_args | dict(cfg.MODEL.MANO_HEAD.TRANSFORMER_DECODER))
+        transformer_args = dict(**transformer_args,
+                                **dict(cfg.MODEL.MANO_HEAD.TRANSFORMER_DECODER))
         self.transformer = TransformerDecoder(
             **transformer_args
         )
