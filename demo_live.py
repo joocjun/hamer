@@ -35,6 +35,7 @@ class LiveHAMERPipeline:
         body_detector: str = 'vitdet'
         rescale_factor: float = 2.0
         batch_size: int = 1
+        focal_length: Optional[float] = None
 
         @classmethod
         def from_dict(cls, env):
@@ -155,14 +156,16 @@ class LiveHAMERPipeline:
         box_center = batch["box_center"].float()
         box_size = batch["box_size"].float()
         img_size = batch["img_size"].float()
-        multiplier = (2 * batch['right'] - 1)
-        scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+
+        focal_length = self.cfg.focal_length
+        if focal_length is None:
+            focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
         pred_cam_t_full = cam_crop_to_full(
             pred_cam,
             box_center,
             box_size,
             img_size,
-            scaled_focal_length).detach().cpu().numpy()
+            focal_length).detach().cpu().numpy()
 
         # Render the result
         batch_size = batch['img'].shape[0]
@@ -197,8 +200,12 @@ class LiveHAMERPipeline:
             cv2.imwrite(f'{prefix}_{person_id}.png',
                         255 * final_img[:, :, ::-1])
 
-    def __call__(self, img_bgr: np.ndarray, render_prefix=None):
+    def __call__(self,
+                 img_bgr: np.ndarray,
+                 render_prefix=None,
+                 focal_length: Optional[float] = None):
         cfg = self.cfg
+        model_cfg = self.model_cfg
 
         with torch.no_grad():
             # img -> hand box
@@ -223,21 +230,67 @@ class LiveHAMERPipeline:
             all_right = []
 
             kpts = []
+            cams = []
+            vtcs = []
+            rgts = []
             for batch in dataloader:
                 batch = recursive_to(batch, self.device)
                 with torch.inference_mode():
                     out = self.model(batch)
-                    kpts.append(
-                        out['pred_keypoints_3d'].detach().cpu().numpy())
 
                 if render_prefix is not None:
                     self.render(batch, out, render_prefix)
+
+                if True:
+                    multiplier = (2 * batch['right'] - 1)
+                    pred_cam = out['pred_cam'].clone()
+                    pred_cam[:, 1] = multiplier * pred_cam[:, 1]
+
+                    box_center = batch["box_center"].float()
+                    box_size = batch["box_size"].float()
+                    img_size = batch["img_size"].float()
+
+                    if focal_length is None:
+                        # fallback#1 from config
+                        focal_length = self.cfg.focal_length
+                    if focal_length is None:
+                        # fallback#2 from model
+                        focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+                    pred_cam_t_full = cam_crop_to_full(
+                        pred_cam,
+                        box_center,
+                        box_size,
+                        img_size,
+                        focal_length).detach().cpu().numpy()
+
+                    if not isinstance(multiplier, np.ndarray):
+                        mmm = multiplier.detach().cpu().numpy()
+                    else:
+                        mmm = multiplier
+                    kpt = out['pred_keypoints_3d'].detach().cpu().numpy()
+                    kpt[..., 0] *= mmm
+                    kpts.append(kpt)
+
+                    vtc = out['pred_vertices'].detach().cpu().numpy()
+                    vtc[..., 0] *= mmm
+                    vtcs.append(vtc)
+                    cams.append(pred_cam_t_full)
+                    rgts.append(batch['right'].detach().cpu().numpy())
 
         if len(kpts) <= 0:
             return None
 
         kpts = np.concatenate(kpts, axis=0)
-        return dict(pred_keypoints_3d=kpts)
+        cams = np.concatenate(cams, axis=0)
+        vtcs = np.concatenate(vtcs, axis=0)
+        rgts = np.concatenate(rgts, axis=0)
+
+        return dict(
+            pred_keypoints_3d=kpts,
+            pred_cam_t_full=cams,
+            pred_vertices=vtcs,
+            is_rights=rgts
+        )
 
 
 def main():
@@ -301,15 +354,27 @@ def main():
                  for img in Path(args.img_folder).glob(end)]
     # Iterate over all images in folder
     t0 = time.time()
-    for i, img_path in enumerate(img_paths):
-        img_cv2 = cv2.imread(str(img_path))
+    # for i, img_path in enumerate(img_paths):
+    #    img_cv2 = cv2.imread(str(img_path))
+    # cap = cv2.VideoCapture('/tmp/docker/20250111_150030.mp4')
+    cap = cv2.VideoCapture('/tmp/docker/sav9/out.mp4')
+    i = 0
+    Path('/tmp/docker/demo_out3').mkdir(
+        parents=True,
+        exist_ok=True)
+    while (cap.isOpened()):
+        flag, img_cv2 = cap.read()
+        if not flag:
+            break
+        # img_cv2 = cv2.imread(str(img_path))
         out = pipe(img_cv2,
-                   # render_prefix=F'/tmp/docker/demo_out/{i:02d}'
-                   render_prefix=None
+                   render_prefix=F'/tmp/docker/demo_out3/{i:02d}'
+                   # render_prefix=None
                    )
         t1 = time.time()
         print(t1 - t0)
         t0 = t1
+        i += 1
 
 
 if __name__ == '__main__':
