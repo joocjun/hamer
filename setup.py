@@ -7,7 +7,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         'gdown',
-        'numpy',
+        'numpy==1.26.1',
         'opencv-python',
         'pyrender',
         'pytorch-lightning',
