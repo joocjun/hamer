@@ -24,7 +24,7 @@ from vitpose_model import ViTPoseModel
 
 import json
 from typing import Dict, Optional
-
+from loguru import logger
 
 class LiveHAMERPipeline:
 
@@ -93,7 +93,7 @@ class LiveHAMERPipeline:
         det_instances = det_out['instances']
         valid_idx = (
             det_instances.pred_classes == 0) & (
-            det_instances.scores > 0.5)
+            det_instances.scores > 0.7)
         pred_bboxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
         pred_scores = det_instances.scores[valid_idx].cpu().numpy()
 
@@ -132,19 +132,19 @@ class LiveHAMERPipeline:
                     keyp[valid, 1].max()]
                 bboxes.append(bbox)
                 is_right.append(1)
-
         if len(bboxes) == 0:
             return None
-
+        print(len(bbox))
         boxes = np.stack(bboxes)
         right = np.stack(is_right)
         out = dict(box=boxes,
-                   right=right)
+                   right=right,)
         return out
 
     def render(self, batch, out,
                prefix: str,
                side_view: bool = False):
+        start = time.time()
         model_cfg = self.model_cfg
         model = self.model
 
@@ -199,6 +199,8 @@ class LiveHAMERPipeline:
 
             cv2.imwrite(f'{prefix}_{person_id}.png',
                         255 * final_img[:, :, ::-1])
+            
+            logger.info(f'Rendering took {time.time()-start}')
 
     def __call__(self,
                  img_bgr: np.ndarray,
@@ -211,6 +213,7 @@ class LiveHAMERPipeline:
             # img -> hand box
             hand_data = self.detect_hand(img_bgr)
             if hand_data is None:
+                logger.warning('no hand is detected')
                 return None
 
             # hand box -> MANO keypoints
@@ -241,43 +244,43 @@ class LiveHAMERPipeline:
                 if render_prefix is not None:
                     self.render(batch, out, render_prefix)
 
-                if True:
-                    multiplier = (2 * batch['right'] - 1)
-                    pred_cam = out['pred_cam'].clone()
-                    pred_cam[:, 1] = multiplier * pred_cam[:, 1]
+                multiplier = (2 * batch['right'] - 1)
+                pred_cam = out['pred_cam'].clone()
+                pred_cam[:, 1] = multiplier * pred_cam[:, 1]
 
-                    box_center = batch["box_center"].float()
-                    box_size = batch["box_size"].float()
-                    img_size = batch["img_size"].float()
+                box_center = batch["box_center"].float()
+                box_size = batch["box_size"].float()
+                img_size = batch["img_size"].float()
 
-                    if focal_length is None:
-                        # fallback#1 from config
-                        focal_length = self.cfg.focal_length
-                    if focal_length is None:
-                        # fallback#2 from model
-                        focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
-                    pred_cam_t_full = cam_crop_to_full(
-                        pred_cam,
-                        box_center,
-                        box_size,
-                        img_size,
-                        focal_length).detach().cpu().numpy()
+                if focal_length is None:
+                    # fallback#1 from config
+                    focal_length = self.cfg.focal_length
+                if focal_length is None:
+                    # fallback#2 from model
+                    focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+                pred_cam_t_full = cam_crop_to_full(
+                    pred_cam,
+                    box_center,
+                    box_size,
+                    img_size,
+                    focal_length).detach().cpu().numpy()
 
-                    if not isinstance(multiplier, np.ndarray):
-                        mmm = multiplier.detach().cpu().numpy()
-                    else:
-                        mmm = multiplier
-                    kpt = out['pred_keypoints_3d'].detach().cpu().numpy()
-                    kpt[..., 0] *= mmm
-                    kpts.append(kpt)
+                if not isinstance(multiplier, np.ndarray):
+                    mmm = multiplier.detach().cpu().numpy()
+                else:
+                    mmm = multiplier
+                kpt = out['pred_keypoints_3d'].detach().cpu().numpy()
+                kpt[..., 0] *= mmm
+                kpts.append(kpt)
 
-                    vtc = out['pred_vertices'].detach().cpu().numpy()
-                    vtc[..., 0] *= mmm
-                    vtcs.append(vtc)
-                    cams.append(pred_cam_t_full)
-                    rgts.append(batch['right'].detach().cpu().numpy())
+                vtc = out['pred_vertices'].detach().cpu().numpy()
+                vtc[..., 0] *= mmm
+                vtcs.append(vtc)
+                cams.append(pred_cam_t_full)
+                rgts.append(batch['right'].detach().cpu().numpy())
 
         if len(kpts) <= 0:
+            logger.warning('no hand is detected')
             return None
 
         kpts = np.concatenate(kpts, axis=0)

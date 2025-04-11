@@ -7,10 +7,12 @@ from loguru import logger
 
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.server import SimpleXMLRPCRequestHandler
+from xmlrpc.client import Binary
 import cv2
-
+import numpy as np 
 from demo_live import LiveHAMERPipeline
 
+import json
 
 class RequestHandler(SimpleXMLRPCRequestHandler):
     rpc_paths = ('/RPC2',)
@@ -20,16 +22,16 @@ class RequestHandler(SimpleXMLRPCRequestHandler):
 class Config:
     cfg_file: str = 'configs/yamls/demo.yaml'
     device: str = 'cuda:0'
+    host: str = '0.0.0.0'
     port: int = 8001
     hamer: LiveHAMERPipeline.Config = LiveHAMERPipeline.Config(
         body_detector='regnety'
     )
 
-
 def main(cfg: Config):
     pipe = LiveHAMERPipeline(cfg.hamer,
                              cfg.device)
-
+    
     def hand(vid_path: str,
              out_path: str,
              focal_length: Optional[float] = None
@@ -54,17 +56,30 @@ def main(cfg: Config):
 
         return 'ok'
 
-    def hand_img(img_path: str,
+    def hand_img(img_data: Binary,
                  out_path: str,
                  focal_length: Optional[float] = None):
-        img = cv2.imread(img_path)
+        
+
+        img = np.frombuffer(img_data.data, dtype=np.uint8)
+        img = img.reshape(480, 640, 3)
         out = pipe(img, render_prefix=None, focal_length=focal_length)
-        with open(out_path, 'wb') as fp:
-            pickle.dump(out, fp)
-        return 'ok'
+        
+        if out is None: 
+            return 'None'
+        else: 
+            return json.dumps(
+                dict(
+                    pred_keypoints_3d=out['pred_keypoints_3d'].tolist(),
+                    pred_cam_t_full=out['pred_cam_t_full'].tolist(),
+                    pred_vertices=out['pred_vertices'].tolist(),
+                    is_rights=out['is_rights'].tolist()
+                )
+            )
 
     # Create server
-    with SimpleXMLRPCServer(('localhost', cfg.port),
+    print('binding to', cfg.host, cfg.port)
+    with SimpleXMLRPCServer((cfg.host, cfg.port),
                             requestHandler=RequestHandler) as server:
         server.register_introspection_functions()
         # Register pow() function; this will use the value of

@@ -5,8 +5,6 @@ import pickle
 from pathlib import Path
 import cv2
 from xmlrpc.client import ServerProxy
-from pkm.real.cseg.fit import SegmenterApp
-from pkm.real.multi_rs_camera import MultiRSCamera, CameraConfig
 
 
 @dataclass
@@ -17,18 +15,18 @@ class Config:
 
 def main(cfg: Config):
     from xmlrpc.client import ServerProxy
-    predictor = ServerProxy(F'http://{cfg.host}:{cfg.port}')
+    predictor = ServerProxy(F'http://{cfg.host}:{cfg.port}/RPC2')
     # vid_path: str = './example_data/test.mp4'
     # vid_path: str = '/input/WHAM/examples/20241217_224650.mp4'
     # vid_path: str = '/tmp/docker/20250111_150030.mp4'
     # vid_path: str = '/tmp/docker/sav6/color.mp4'
-    vid_path: str = '/tmp/docker/sav10/out.mp4'
-    cam_path: str = '/tmp/docker/sav10/cam.pkl'
+    vid_path: str = 'out.mp4'
+    cam_path: str = 'cam.pkl'
 
     with open(cam_path, 'rb') as fp:
         fx = pickle.load(fp)['K'][0, 0]
 
-    out_path: str = '/tmp/docker/hamer_test/out_hand3.pkl'
+    out_path: str = 'out_hand3.pkl'
     Path(out_path).parent.mkdir(parents=True,
                                 exist_ok=True)
     out = predictor.hand(vid_path,
