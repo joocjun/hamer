@@ -26,6 +26,16 @@ import json
 from typing import Dict, Optional
 from loguru import logger
 
+def logging_time(original_fn):
+    def wrapper_fn(*args, **kwargs):
+        start_time = time.time()
+        result = original_fn(*args, **kwargs)
+        end_time = time.time()
+        print("WorkingTime[{}]: {} sec".format(original_fn.__name__, end_time-start_time))
+        return result
+    return wrapper_fn
+
+
 class LiveHAMERPipeline:
 
     @dataclass
@@ -46,7 +56,7 @@ class LiveHAMERPipeline:
 
     def __init__(self,
                  cfg: Config,
-                 device: Union[torch.device, str, None] = 'cuda'):
+                 device: Union[torch.device, str, None] = 'cuda:0'):
         # Download and load checkpoints
         download_models(cfg.cache_dir)
         model, model_cfg = load_hamer(cfg.checkpoint)
@@ -202,6 +212,7 @@ class LiveHAMERPipeline:
             
             logger.info(f'Rendering took {time.time()-start}')
 
+    @logging_time
     def __call__(self,
                  img_bgr: np.ndarray,
                  render_prefix=None,

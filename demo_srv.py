@@ -13,6 +13,16 @@ import numpy as np
 from demo_live import LiveHAMERPipeline
 
 import json
+import time
+
+def logging_time(original_fn):
+    def wrapper_fn(*args, **kwargs):
+        start_time = time.time()
+        result = original_fn(*args, **kwargs)
+        end_time = time.time()
+        print("WorkingTime[{}]: {} sec".format(original_fn.__name__, end_time-start_time))
+        return result
+    return wrapper_fn
 
 class RequestHandler(SimpleXMLRPCRequestHandler):
     rpc_paths = ('/RPC2',)
@@ -21,7 +31,7 @@ class RequestHandler(SimpleXMLRPCRequestHandler):
 @dataclass
 class Config:
     cfg_file: str = 'configs/yamls/demo.yaml'
-    device: str = 'cuda:0'
+    device: str = 'cuda:4'
     host: str = '0.0.0.0'
     port: int = 8001
     hamer: LiveHAMERPipeline.Config = LiveHAMERPipeline.Config(
@@ -30,7 +40,7 @@ class Config:
 
 def main(cfg: Config):
     pipe = LiveHAMERPipeline(cfg.hamer,
-                             cfg.device)
+                             'cuda:0',)
     
     def hand(vid_path: str,
              out_path: str,
@@ -55,7 +65,8 @@ def main(cfg: Config):
             pickle.dump(outs, fp)
 
         return 'ok'
-
+    
+    @logging_time
     def hand_img(img_data: Binary,
                  out_path: str,
                  focal_length: Optional[float] = None):
@@ -89,7 +100,7 @@ def main(cfg: Config):
         # Run the server's main loop
         server.serve_forever()
 
-    print()
+    
     logger.info('Done !')
 
 
